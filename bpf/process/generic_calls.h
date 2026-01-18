@@ -5,6 +5,7 @@
 #define __GENERIC_CALLS_H__
 
 #include "bpf_tracing.h"
+#include "errmetrics.h"
 #include "pfilter.h"
 #include "policy_filter.h"
 #include "types/basic.h"
@@ -900,11 +901,10 @@ do_override_action(__s32 error)
 	id = get_current_pid_tgid();
 
 	/*
-	 * TODO: this should not happen, it means that the override
-	 * program was not executed for some reason, we should do
-	 * warning in here
+	 * This should not happen, it means that the override program
+	 * was not executed for some reason.
 	 */
-	error_p = map_lookup_elem(&override_tasks, &id);
+	error_p = with_errmetrics_ptr(map_lookup_elem, &override_tasks, &id);
 	if (error_p)
 		*error_p = error;
 	else
@@ -927,11 +927,10 @@ write_user_arg(void *ctx, void *addr, __u32 value)
 	__u64 id = get_current_pid_tgid();
 
 	/*
-	 * TODO: this should not happen, it means that the override
-	 * program was not executed for some reason, we should do
-	 * warning in here
+	 * This should not happen, it means that the override program
+	 * was not executed for some reason.
 	 */
-	data = map_lookup_elem(&write_offload, &id);
+	data = with_errmetrics_ptr(map_lookup_elem, &write_offload, &id);
 	if (data)
 		*data = tmp;
 	else

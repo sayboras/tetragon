@@ -19,6 +19,7 @@ var Files = map[uint8]string{
 	10: "uprobe_offload.h",
 	11: "bpf_cgroup_release.c",
 	12: "bpf_cgroup_rmdir.c",
+	13: "generic_calls.h",
 }
 
 func BPFFileName(id uint8) string {
