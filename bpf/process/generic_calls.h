@@ -543,7 +543,6 @@ FUNC_INLINE long get_pt_regs_arg_syscall(struct pt_regs *ctx, __u16 offset, __u8
 	return val;
 }
 
-// TODO let's unite this with read_reg in bpf/process/uprobe_offload.h
 #if defined(GENERIC_KPROBE) || defined(GENERIC_UPROBE)
 FUNC_INLINE long get_pt_regs_arg(struct pt_regs *ctx, struct event_config *config, int index)
 {
