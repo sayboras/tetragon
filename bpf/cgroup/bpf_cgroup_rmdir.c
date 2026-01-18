@@ -9,6 +9,7 @@
 #include "bpf_cgroup.h"
 #include "bpf_task.h"
 #include "bpf_cgroup_events.h"
+#include "errmetrics.h"
 
 char _license[] __attribute__((section(("license")), used)) = "GPL";
 #ifdef VMLINUX_KERNEL_VERSION
@@ -33,12 +34,24 @@ tg_tp_cgrp_rmdir(struct bpf_raw_tracepoint_args *ctx)
 		return 0;
 
 	cgrp_track = map_lookup_elem(&tg_cgrps_tracking_map, &cgrpid);
-	/* TODO: check cgroup level if it is under our tracking level
-	 *   then we probably did miss it and should report this.
-	 *   Otherwise the cgroup was never tracked and let's exit.
-	 */
-	if (!cgrp_track)
+	if (!cgrp_track) {
+		/*
+		 * Check if this cgroup should have been tracked based on its
+		 * level and hierarchy. If it is at or above our tracking level
+		 * and in the right hierarchy, we missed tracking it.
+		 */
+		__u32 level = get_cgroup_level(cgrp);
+		__u32 hierarchy_id = get_cgroup_hierarchy_id(cgrp);
+
+		conf = map_lookup_elem(&tg_conf_map, &zero);
+		if (conf && conf->tg_cgrp_level > 0 &&
+		    conf->tg_cgrp_hierarchy == hierarchy_id &&
+		    level > 0 && level <= conf->tg_cgrp_level) {
+			/* We should have tracked this cgroup but missed it */
+			errmetrics(ENOENT);
+		}
 		return 0;
+	}
 
 	map_delete_elem(&tg_cgrps_tracking_map, &cgrpid);
 
