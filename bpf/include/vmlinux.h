@@ -72,4 +72,8 @@ struct net___rhel7 {
 	unsigned int proc_inum;
 };
 
+struct pid_namespace___rhel7 {
+	unsigned int proc_inum;
+};
+
 #endif /* __VMLINUX_H__ */

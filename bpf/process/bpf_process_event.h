@@ -201,7 +201,6 @@ get_namespaces(struct msg_ns *msg, struct task_struct *task)
 			   _(&ns->proc_inum));
 	}
 
-	// TODO rhel7 pid namespace support
 	if (bpf_core_field_exists(task->thread_pid)) {
 		struct pid *p = 0;
 
@@ -209,11 +208,21 @@ get_namespaces(struct msg_ns *msg, struct task_struct *task)
 		if (p) {
 			int level = 0;
 			struct upid up;
+			struct pid_namespace *pid_ns;
 
 			probe_read(&level, sizeof(level), _(&p->level));
 			probe_read(&up, sizeof(up), _(&p->numbers[level]));
-			probe_read(&msg->pid_inum, sizeof(msg->pid_inum),
-				   _(&up.ns->ns.inum));
+			pid_ns = up.ns;
+			if (bpf_core_field_exists(pid_ns->ns)) {
+				probe_read(&msg->pid_inum, sizeof(msg->pid_inum),
+					   _(&up.ns->ns.inum));
+			} else {
+				struct pid_namespace___rhel7 *ns =
+					(struct pid_namespace___rhel7 *)_(pid_ns);
+
+				probe_read(&msg->pid_inum, sizeof(msg->pid_inum),
+					   _(&ns->proc_inum));
+			}
 		} else
 			msg->pid_inum = 0;
 	}
