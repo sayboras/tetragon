@@ -355,6 +355,13 @@ event_find_curr_probe(struct msg_generic_kprobe *msg)
 	get_namespaces(&curr->ns, task);
 	set_in_init_tree(curr, NULL);
 
+	/* Collect cgroup info for container enrichment when process is not found
+	 * in execve_map. This enables user-space to look up pod info directly
+	 * from the cgroup ID, which is critical for events like kubectl exec
+	 * where the kprobe fires before the execve event is recorded.
+	 */
+	__event_get_cgroup_info(task, &msg->kube);
+
 	read_exe((struct task_struct *)get_current_task(), &msg->exe);
 	return curr;
 }

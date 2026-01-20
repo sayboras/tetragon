@@ -14,6 +14,7 @@ import (
 	"github.com/cilium/tetragon/api/v1/tetragon"
 	"github.com/cilium/tetragon/pkg/api/processapi"
 	"github.com/cilium/tetragon/pkg/api/tracingapi"
+	"github.com/cilium/tetragon/pkg/cgroups"
 	"github.com/cilium/tetragon/pkg/constants"
 	"github.com/cilium/tetragon/pkg/eventcache"
 	gt "github.com/cilium/tetragon/pkg/generictypes"
@@ -30,6 +31,7 @@ import (
 	"github.com/cilium/tetragon/pkg/reader/network"
 	"github.com/cilium/tetragon/pkg/reader/notify"
 	"github.com/cilium/tetragon/pkg/reader/path"
+	"github.com/cilium/tetragon/pkg/sensors/exec/procevents"
 	"github.com/cilium/tetragon/pkg/tracingpolicy"
 )
 
@@ -63,6 +65,19 @@ func getProcessParent(key *processapi.MsgExecveKey, flags uint8) (*process.Proce
 
 func isUnknown(proc *tetragon.Process) bool {
 	return strings.Contains(proc.Flags, "unknown")
+}
+
+// getContainerIDFromKube extracts the container ID from the kube info.
+// This is used to enrich unknown processes with pod info when the process
+// is not found in the execve_map (e.g., during kubectl exec).
+func getContainerIDFromKube(kube *processapi.MsgK8s) string {
+	// The first byte is set to zero if there is no docker ID for this event.
+	if kube.Docker[0] == 0x00 {
+		return ""
+	}
+	cgroupName := cgroups.CgroupNameFromCStr(kube.Docker[:processapi.CGROUP_NAME_LENGTH])
+	containerID, _ := procevents.LookupContainerId(cgroupName, true, false)
+	return containerID
 }
 
 func kprobeAction(act uint64) tetragon.KprobeAction {
@@ -339,6 +354,19 @@ func GetProcessKprobe(event *MsgGenericKprobeUnix) *tetragon.ProcessKprobe {
 
 	proc, parent, tetragonProcess, tetragonParent := getProcessParent(&event.Msg.ProcessKey, event.Msg.Common.Flags)
 
+	// For unknown processes (not found in execve_map), try to enrich with pod info
+	// using the cgroup info collected from BPF. This is critical for events like
+	// kubectl exec where the kprobe fires before the execve event is recorded.
+	if isUnknown(tetragonProcess) && option.Config.EnableK8s {
+		containerID := getContainerIDFromKube(&event.Msg.Kube)
+		if containerID != "" {
+			if podInfo := process.GetPodInfo(containerID, "", "", 0); podInfo != nil {
+				tetragonProcess.Docker = containerID
+				tetragonProcess.Pod = podInfo
+			}
+		}
+	}
+
 	// Set the ancestors only if --enable-ancestors flag includes 'kprobe'.
 	if option.Config.EnableProcessKprobeAncestors && proc.NeededAncestors() {
 		ancestors, _ = process.GetAncestorProcessesInternal(tetragonProcess.ParentExecId)
@@ -496,6 +524,19 @@ func (msg *MsgGenericTracepointUnix) HandleMessage() *tetragon.GetEventsResponse
 	var tetragonAncestors []*tetragon.Process
 
 	proc, parent, tetragonProcess, tetragonParent := getProcessParent(&msg.Msg.ProcessKey, msg.Msg.Common.Flags)
+
+	// For unknown processes (not found in execve_map), try to enrich with pod info
+	// using the cgroup info collected from BPF. This is critical for events like
+	// kubectl exec where the tracepoint fires before the execve event is recorded.
+	if isUnknown(tetragonProcess) && option.Config.EnableK8s {
+		containerID := getContainerIDFromKube(&msg.Msg.Kube)
+		if containerID != "" {
+			if podInfo := process.GetPodInfo(containerID, "", "", 0); podInfo != nil {
+				tetragonProcess.Docker = containerID
+				tetragonProcess.Pod = podInfo
+			}
+		}
+	}
 
 	// Set the ancestors only if --enable-ancestors flag includes 'tracepoint'.
 	if option.Config.EnableProcessTracepointAncestors && proc.NeededAncestors() {
@@ -1096,6 +1137,19 @@ func GetProcessLsm(event *MsgGenericLsmUnix) *tetragon.ProcessLsm {
 	var tetragonArgs []*tetragon.KprobeArgument
 
 	proc, parent, tetragonProcess, tetragonParent := getProcessParent(&event.Msg.ProcessKey, event.Msg.Common.Flags)
+
+	// For unknown processes (not found in execve_map), try to enrich with pod info
+	// using the cgroup info collected from BPF. This is critical for events like
+	// kubectl exec where the LSM hook fires before the execve event is recorded.
+	if isUnknown(tetragonProcess) && option.Config.EnableK8s {
+		containerID := getContainerIDFromKube(&event.Msg.Kube)
+		if containerID != "" {
+			if podInfo := process.GetPodInfo(containerID, "", "", 0); podInfo != nil {
+				tetragonProcess.Docker = containerID
+				tetragonProcess.Pod = podInfo
+			}
+		}
+	}
 
 	// Set the ancestors only if --enable-ancestors flag includes 'lsm'.
 	if option.Config.EnableProcessLsmAncestors && proc.NeededAncestors() {
