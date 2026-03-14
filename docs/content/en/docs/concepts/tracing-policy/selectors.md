@@ -186,10 +186,31 @@ selectors:
 Data filters can be specified under the `matchData` field and provide
 filtering based on the value of the specified `data` field.
 
+Unlike `matchArgs` which filters on function arguments, `matchData` filters on
+data extracted from kernel objects such as the current task. This makes it a
+powerful, generic mechanism for filtering based on process context — including
+credentials, process metadata, and other task fields — without requiring
+dedicated selectors for each property.
+
+{{< note >}}
+The `data` fields use BTF (BPF Type Format) to resolve kernel structure fields,
+which means the available fields depend on your kernel version. Fields are
+specified using dot notation (e.g., `cred.uid.val`) to navigate nested
+structures, and pointers are automatically dereferenced.
+{{< /note >}}
+
 You can specify the argument either in the `index` or in `args` field. Both `index` and
 `args` field denote the argument position within the spec file.
 
-In the following example we extra pid value from `current_task` and filter
+The available operators for `matchData` are:
+- `Equal`
+- `NotEqual`
+- `Prefix`
+- `Postfix`
+- `GreaterThan` (aka `GT`)
+- `LessThan` (aka `LT`)
+
+In the following example we extract the pid value from `current_task` and filter
 on all values except for `1`.
 
 ```yaml
@@ -205,6 +226,84 @@ selectors:
     values:
     - "1"
 ```
+
+**Further examples**
+
+A common use case is filtering events by user ID. For example, the following
+policy attaches to the `__x64_sys_fchmodat` syscall and only generates events
+when the calling process has a UID greater than 1000, effectively filtering out
+system users and root:
+
+```yaml
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: "fchmodat-uid-filter"
+spec:
+  kprobes:
+  - call: "__x64_sys_fchmodat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+    - index: 1
+      type: "string"
+    - index: 2
+      type: "int"
+    data:
+    - type: "int"
+      index: 0
+      source: "current_task"
+      resolve: "cred.uid.val"
+    selectors:
+    - matchData:
+      - index: 0
+        operator: "GreaterThan"
+        values:
+        - "1000"
+```
+
+Similarly, you can filter by the login UID (`loginuid`) to distinguish
+interactive user sessions from system services. Most daemons have a login UID of
+4294967295 (i.e., unset), so filtering on valid login UIDs captures only actual
+user activity:
+
+```yaml
+data:
+- type: "int"
+  index: 0
+  source: "current_task"
+  resolve: "loginuid.val"
+selectors:
+- matchData:
+  - index: 0
+    operator: "NotEqual"
+    values:
+    - "4294967295"
+```
+
+You can also filter based on the process command name by resolving the `comm`
+field:
+
+```yaml
+data:
+- type: "string"
+  index: 0
+  source: "current_task"
+  resolve: "comm"
+selectors:
+- matchData:
+  - index: 0
+    operator: "Equal"
+    values:
+    - "nginx"
+```
+
+{{< note >}}
+`matchData` can be combined with other selectors such as `matchArgs`,
+`matchBinaries`, and `matchActions` within the same selector block. All filters
+within a selector are logically ANDed together.
+{{< /note >}}
 
 ## Return args filter
 
@@ -233,7 +332,15 @@ returns `-1` for a failed attempt with an unprivileged user.
 ## PIDs filter
 
 PIDs filters can be specified under the `matchPIDs` field and provide filtering
-based on the value of host pid of the process. For example, the following
+based on the value of host pid of the process.
+
+{{< note >}}
+To filter by process credentials such as UID, GID, or login UID rather than PID,
+use the [`matchData`](#data-filter) selector with `source: "current_task"`. For
+example, `resolve: "cred.uid.val"` lets you filter events by user ID.
+{{< /note >}}
+
+For example, the following
 `matchPIDs` filter tells the BPF code that observe only hooks for which the
 host PID is equal to either `pid1` or `pid2` or `pid3`:
 
@@ -642,6 +749,13 @@ Here we have a single selector. This CRD will match if:
 NetNs == host`)` `]`
 
 ## Capabilities filter
+
+{{< note >}}
+For filtering based on other credential properties (e.g., UID, GID, effective
+UID), see the [`matchData`](#data-filter) selector which can resolve arbitrary
+fields from the current task's credential structure using
+`source: "current_task"`.
+{{< /note >}}
 
 Capabilities filters can be specified under the `matchCapabilities` field and
 provide filtering of calls based on Linux capabilities in the specific sets.
